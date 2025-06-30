@@ -6,9 +6,18 @@ def get_minswap_tvl():
     url = "https://api.koios.rest/api/v1/address_info"
     res = requests.post(url, json={"_addresses": [address]})
     data = res.json()
-
     utxos = data[0].get('utxo_set', [])
     total = sum(int(x['value']) for x in utxos if x['value'])
+    return total
+
+def get_minswap_total_tvl(addresses):
+    url = "https://api.koios.rest/api/v1/address_info"
+    resp = requests.post(url, json={"_addresses": addresses})
+    data = resp.json()
+    total = 0
+    for addr in data:
+        utxos = addr.get("utxo_set", [])
+        total += sum(int(u["value"]) for u in utxos)
     return total
 
 def store_minswap_tvl():
@@ -24,4 +33,4 @@ def store_minswap_tvl():
     cursor.close()
     conn.close()
 
-store_minswap_tvl()
+#store_minswap_tvl()
