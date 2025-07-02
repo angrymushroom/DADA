@@ -11,15 +11,31 @@ api = BlockFrostApi(
     base_url=ApiUrls.mainnet.value,
 )
 
-# Temporary hardcoded Liqwid pool addresses for testing
-LIQWID_POOL_ADDRESSES = [
-    "addr1zxhew7fmsup08qvhdnkg8ccra88pw7q5trrncja3dlszhq6pr0ayfupfkpyjs0lxpyulnd9wq4ct2zmaz0rg0e8zpjyq7wxle2", # Existing address
-    "addr1z8p79rpkcdz8x9d6tft0x0dx5mwuzac2sa4gm8cvkw5hcn8dxhcxap54sz6a9x970gzmgkvnchja2wc4pkpq5kn9xfeslms4pf", # Example: Liqwid ADA pool (might need to verify this is a real Liqwid pool)
-    "addr1w8snz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxzgusf9xw" # Example: Liqwid USDC pool (might need to verify this is a real Liqwid pool)
-]
+# Policy ID for qADA (Liqwid's qToken for ADA)
+QADA_ASSET_POLICY_ID = "a04ce7a52545e5e33c2867e148898d9e667a69602285f6a1298f9d68"
+
+def get_liqwid_lending_pool_addresses(policy_id):
+    """Gets all addresses holding a specific Liqwid qToken, which are the lending pools."""
+    all_pool_addresses = set()
+    try:
+        # Get all assets (qTokens) under this policy
+        assets = api.assets_policy(policy_id)
+        for asset in assets:
+            # For each qToken, find its holders (which are the lending pool addresses)
+            holders = api.asset_addresses(asset.asset)
+            for holder in holders:
+                all_pool_addresses.add(holder.address)
+    except ApiError as e:
+        print(f"Error fetching assets for policy {policy_id}: {e}")
+    return list(all_pool_addresses)
 
 def fetch_and_insert_liqwid_tvl():
-    """Fetches TVL for hardcoded Liqwid pools and inserts it into the database."""
+    """Fetches TVL for all Liqwid lending pools and inserts it into the database."""
+    lending_pool_addresses = get_liqwid_lending_pool_addresses(QADA_ASSET_POLICY_ID)
+    if not lending_pool_addresses:
+        print("No Liqwid lending pool addresses found. Exiting.")
+        return
+
     conn = psycopg2.connect(
         dbname=os.getenv("DB_NAME"),
         user=os.getenv("DB_USER"),
@@ -29,7 +45,7 @@ def fetch_and_insert_liqwid_tvl():
     )
     cursor = conn.cursor()
 
-    for address in LIQWID_POOL_ADDRESSES:
+    for address in lending_pool_addresses:
         try:
             utxos = api.address_utxos(address)
             for utxo in utxos:

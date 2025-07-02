@@ -4,6 +4,9 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 from datetime import datetime, UTC
+from charli3_dendrite.backend import set_backend
+from charli3_dendrite.backend.blockfrost import BlockFrostBackend
+from charli3_dendrite.dexs.amm.minswap import MinswapCPPState, MinswapV2CPPState
 
 load_dotenv()
 
@@ -12,15 +15,46 @@ api = BlockFrostApi(
     base_url=ApiUrls.mainnet.value
 )
 
-# Temporary hardcoded Minswap pool addresses for testing
-MINSWAP_POOL_ADDRESSES = [
-    "addr1qy2jt0qpqz2z2z9zx5w4xemekkce7yderz53kjue53lpqv90lkfa9sgrfjuz6uvt4uqtrqhl2kj0a9lnr9ndzutx32gqleeckv", # Original address
-    "addr1w8snz7c4974vzdpxu65ruphl3zjdvtxw8strf2c2tmqnxzgusf9xw", # From charli3-dendrite MinswapCPPState
-    "addr1wy7kkcpuf39tusnnyga5t2zcul65dwx9yqzg7sep3cjscesx2q5m5"  # From charli3-dendrite MinswapDJEDiUSDStableState
-]
+def get_all_minswap_pools():
+    """Gets all Minswap pool addresses by querying LP token policies."""
+    all_pool_addresses = set()
+    
+    # Configure the backend for charli3-dendrite
+    set_backend(BlockFrostBackend(project_id=os.getenv("BLOCKFROST_API_KEY")))
+
+    # Get LP policy IDs from MinswapCPPState (V1 pools)
+    for policy_id in MinswapCPPState.lp_policy():
+        try:
+            assets = api.assets_policy(policy_id)
+            for asset in assets:
+                # Get addresses holding this LP token
+                holders = api.asset_addresses(asset.asset)
+                for holder in holders:
+                    all_pool_addresses.add(holder.address)
+        except ApiError as e:
+            print(f"Error fetching assets for policy {policy_id}: {e}")
+
+    # Get LP policy IDs from MinswapV2CPPState (V2 pools)
+    for policy_id in MinswapV2CPPState.lp_policy():
+        try:
+            assets = api.assets_policy(policy_id)
+            for asset in assets:
+                # Get addresses holding this LP token
+                holders = api.asset_addresses(asset.asset)
+                for holder in holders:
+                    all_pool_addresses.add(holder.address)
+        except ApiError as e:
+            print(f"Error fetching assets for policy {policy_id}: {e}")
+
+    return list(all_pool_addresses)
 
 def fetch_and_insert_all_pools_tvl():
-    """Fetches TVL for hardcoded Minswap pools and inserts it into the database."""
+    """Fetches TVL for all Minswap pools and inserts it into the database."""
+    pool_addresses = get_all_minswap_pools()
+    if not pool_addresses:
+        print("No Minswap pool addresses found. Exiting.")
+        return
+
     conn = psycopg2.connect(
         dbname=os.getenv("DB_NAME"),
         user=os.getenv("DB_USER"),
@@ -30,7 +64,7 @@ def fetch_and_insert_all_pools_tvl():
     )
     cursor = conn.cursor()
 
-    for address in MINSWAP_POOL_ADDRESSES:
+    for address in pool_addresses:
         try:
             utxos = api.address_utxos(address)
             for utxo in utxos:

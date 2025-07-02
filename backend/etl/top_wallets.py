@@ -1,26 +1,67 @@
-import requests
-from backend.db import get_db_connection
+from blockfrost import BlockFrostApi, ApiError, ApiUrls
+import os
+import psycopg2
+from dotenv import load_dotenv
+from datetime import datetime, UTC
 
-def fetch_top_holders(policy_id):
-    r = requests.post("https://api.koios.rest/api/v1/asset_addresses", json={"_asset_policy": policy_id})
-    addresses = r.json()
-    # Sort by quantity
-    top = sorted(addresses, key=lambda x: int(x['quantity']), reverse=True)[:10]
-    return top
+load_dotenv()
 
-def main():
-    protocol = "minswap"
-    policy_id = "addr1qy2jt0qpqz2z2z9zx5w4xemekkce7yderz53kjue53lpqv90lkfa9sgrfjuz6uvt4uqtrqhl2kj0a9lnr9ndzutx32gqleeckv"  # Fill in
-    conn = get_db_connection()
-    cur = conn.cursor()
-    for holder in fetch_top_holders(policy_id):
-        cur.execute(
-            "INSERT INTO top_wallets (protocol_name, wallet_address, balance) VALUES (%s, %s, %s)",
-            (protocol, holder['address'], holder['quantity'])
-        )
+api = BlockFrostApi(
+    project_id=os.getenv("BLOCKFROST_API_KEY"),
+    base_url=ApiUrls.mainnet.value
+)
+
+# Define assets for which to fetch top holders
+# For ADA, asset is 'lovelace'
+ASSETS_TO_TRACK = {
+    "iUSD": "f66d78b4a3cb3d37afa0ec36461e51ecbde00f26c8f0a68f94b6988069555344", # Indigo iUSD
+}
+
+def fetch_and_insert_top_wallets():
+    conn = psycopg2.connect(
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT")
+    )
+    cursor = conn.cursor()
+
+    for token_symbol, asset_id in ASSETS_TO_TRACK.items():
+        try:
+            # Blockfrost's asset_addresses endpoint returns addresses holding a specific asset
+            # We can limit the count to get top holders (though Blockfrost doesn't sort by quantity)
+            # For a true "top" list, we might need to fetch more and sort locally or use a different API
+            asset_holders = api.asset_addresses(asset=asset_id, count=10) # Fetch top 10 holders
+
+            for holder in asset_holders:
+                wallet_address = holder.address
+                balance = int(holder.quantity)
+                
+                # Convert lovelace to ADA for display
+                if asset_id == 'lovelace':
+                    balance = balance / 1_000_000
+
+                cursor.execute("""
+                    INSERT INTO top_wallets (protocol_name, protocol_segment, wallet_address, balance, snapshot_time, data_source, chain)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (protocol_name, protocol_segment, wallet_address, snapshot_time) DO NOTHING;
+                """, (
+                    token_symbol, # Using token_symbol as protocol_name for simplicity here
+                    'Wallet',
+                    wallet_address,
+                    balance,
+                    datetime.now(UTC),
+                    'Blockfrost',
+                    'Cardano'
+                ))
+        except ApiError as e:
+            print(f"Error fetching top wallets for {token_symbol} ({asset_id}): {e}")
+
     conn.commit()
-    cur.close()
+    cursor.close()
     conn.close()
 
 if __name__ == "__main__":
-    main()
+    fetch_and_insert_top_wallets()
+    print("Successfully fetched and inserted top wallet data.")
