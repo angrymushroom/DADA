@@ -1,8 +1,9 @@
+
 from blockfrost import BlockFrostApi, ApiError, ApiUrls
 import os
 import psycopg2
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, UTC
 
 load_dotenv()
 
@@ -11,19 +12,25 @@ api = BlockFrostApi(
     base_url=ApiUrls.mainnet.value
 )
 
-POOL_ADDRESS = "addr1xyaat796qyq08x2jgunpn2lamdfdjsd9x3acsc67sa98kdacxk92m5cvvr46z6rq3t27sa2e96dhewx8qzp8eh58lx3slsxqwp"
+# The asset ID for iUSD (policy_id + asset_name_hex)
+IUSD_ASSET = "f66d78b4a3cb3d37afa0ec36461e51ecbde00f26c8f0a68f94b6988069555344"
 
-def fetch_pool_balance():
-    utxos = api.address_utxos(POOL_ADDRESS)
-    total_lovelace = 0
-    for utxo in utxos:
-        for amount in utxo.amount:
-            if amount.unit == 'lovelace':
-                total_lovelace += int(amount.quantity)
-    ada = total_lovelace / 1_000_000
-    return ada
+def get_indigo_cdp_addresses(asset_id):
+    """Gets all addresses holding a specific Indigo iAsset, which are the CDPs."""
+    try:
+        asset_holders = api.asset_addresses(asset=asset_id, count=100) # Get up to 1000 holders
+        return [holder.address for holder in asset_holders]
+    except ApiError as e:
+        print(f"Error fetching asset holders for {asset_id}: {e}")
+        return []
 
-def insert_tvl(ada_amount):
+def fetch_and_insert_indigo_tvl():
+    """Fetches TVL for all Indigo CDPs and inserts it into the database."""
+    cdp_addresses = get_indigo_cdp_addresses(IUSD_ASSET)
+    if not cdp_addresses:
+        print("No CDP addresses found. Exiting.")
+        return
+
     conn = psycopg2.connect(
         dbname=os.getenv("DB_NAME"),
         user=os.getenv("DB_USER"),
@@ -32,19 +39,43 @@ def insert_tvl(ada_amount):
         port=os.getenv("DB_PORT")
     )
     cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO tvl_snapshots (protocol_name, tvl, snapshot_time)
-        VALUES (%s, %s, %s)
-    """, (
-        'indigo',
-        ada_amount,
-        datetime.utcnow()
-    ))
+
+    for address in cdp_addresses:
+        try:
+            utxos = api.address_utxos(address)
+            for utxo in utxos:
+                for amount in utxo.amount:
+                    # We are interested in the collateral (ADA, etc.), not the iUSD itself
+                    if amount.unit == IUSD_ASSET:
+                        continue
+
+                    asset = amount.unit
+                    tvl = int(amount.quantity)
+                    if asset == 'lovelace':
+                        tvl = tvl / 1_000_000  # Convert lovelace to ADA
+
+                    cursor.execute("""
+                        INSERT INTO tvl_snapshots (protocol_name, protocol_segment, address, asset, tvl, snapshot_time, data_source, chain)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (protocol_name, protocol_segment, address, snapshot_time) DO NOTHING;
+                    """, (
+                        'Indigo',
+                        'CDP',
+                        address,
+                        asset,
+                        tvl,
+                        datetime.now(UTC),
+                        'Blockfrost',
+                        'Cardano'
+                    ))
+        except ApiError as e:
+            print(f"Error fetching data for address {address}: {e}")
+
     conn.commit()
     cursor.close()
     conn.close()
 
 if __name__ == "__main__":
-    ada = fetch_pool_balance()
-    print(f"Indigo ADA TVL: {ada}")
-    insert_tvl(ada)
+    fetch_and_insert_indigo_tvl()
+    print("Successfully fetched and inserted Indigo TVL data.")
+
