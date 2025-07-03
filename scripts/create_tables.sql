@@ -1,77 +1,36 @@
--- Drop tables if they exist to ensure a clean slate for schema updates
-DROP TABLE IF EXISTS tvl_snapshots CASCADE;
+-- scripts/create_tables.sql
+-- Description: This script creates all necessary tables for the DADA project.
+-- It drops existing tables to ensure a clean slate for schema migration.
+
+-- Drop existing tables (order matters due to foreign key constraints)
+DROP TABLE IF EXISTS dws_tvl_snapshots_dm CASCADE;
+DROP TABLE IF EXISTS dws_token_prices_dm CASCADE;
+DROP TABLE IF EXISTS dws_apy_snapshots_dm CASCADE;
+DROP TABLE IF EXISTS dws_top_wallets_dm CASCADE;
+DROP TABLE IF EXISTS dws_risk_metrics_dm CASCADE;
+DROP TABLE IF EXISTS ods_coingecko_prices_hm CASCADE;
+
 DROP TABLE IF EXISTS apy_snapshots CASCADE;
+DROP TABLE IF EXISTS risk_metrics CASCADE;
 DROP TABLE IF EXISTS token_prices CASCADE;
 DROP TABLE IF EXISTS top_wallets CASCADE;
-DROP TABLE IF EXISTS risk_metrics CASCADE;
+DROP TABLE IF EXISTS tvl_snapshots CASCADE;
 
--- 1. TVL snapshots
-CREATE TABLE tvl_snapshots (
-    id SERIAL PRIMARY KEY,
-    protocol_name VARCHAR(100) NOT NULL,
-    protocol_segment VARCHAR(100),
-    address VARCHAR(255) NOT NULL,
-    asset VARCHAR(255),
-    tvl NUMERIC(30,4) NOT NULL,
-    snapshot_time TIMESTAMP NOT NULL,
-    data_source VARCHAR(100),
-    chain VARCHAR(50),
-    UNIQUE (protocol_name, protocol_segment, address, snapshot_time)
-);
-CREATE INDEX idx_tvl_snapshots_protocol_time ON tvl_snapshots(protocol_name, snapshot_time);
+DROP TABLE IF EXISTS dim_protocol_dm CASCADE;
+DROP TABLE IF EXISTS dim_asset_dm CASCADE;
+DROP TABLE IF EXISTS dim_time_dm CASCADE;
 
--- 2. APY snapshots
-CREATE TABLE IF NOT EXISTS apy_snapshots (
-    id SERIAL PRIMARY KEY,
-    protocol_name VARCHAR(100) NOT NULL,
-    protocol_segment VARCHAR(100),
-    address VARCHAR(255),
-    pool_name VARCHAR(100),
-    apy NUMERIC(10,4),
-    snapshot_time TIMESTAMP NOT NULL DEFAULT now(),
-    data_source VARCHAR(100),
-    chain VARCHAR(50),
-    UNIQUE (protocol_name, protocol_segment, address, snapshot_time)
-);
-CREATE INDEX idx_apy_snapshots_protocol_time ON apy_snapshots(protocol_name, snapshot_time);
+-- Create Dimension Tables
+\i sql/dimensions/create_dim_time_dm.sql
+\i sql/dimensions/create_dim_protocol_dm.sql
+\i sql/dimensions/create_dim_asset_dm.sql
 
--- 3. Token prices
-CREATE TABLE IF NOT EXISTS token_prices (
-    id SERIAL PRIMARY KEY,
-    token_symbol VARCHAR(50) NOT NULL,
-    token_address VARCHAR(255),
-    price_usd NUMERIC(20,8),
-    snapshot_time TIMESTAMP NOT NULL DEFAULT now(),
-    data_source VARCHAR(100),
-    chain VARCHAR(50),
-    UNIQUE (token_symbol, token_address, snapshot_time)
-);
-CREATE INDEX idx_token_prices_time ON token_prices(snapshot_time);
+-- Create ODS Tables
+\i sql/ods/create_ods_coingecko_prices_hm.sql
 
--- 4. Top wallet holdings
-CREATE TABLE IF NOT EXISTS top_wallets (
-    id SERIAL PRIMARY KEY,
-    protocol_name VARCHAR(100) NOT NULL,
-    protocol_segment VARCHAR(100),
-    wallet_address VARCHAR(255) NOT NULL,
-    balance NUMERIC(30,8),
-    snapshot_time TIMESTAMP NOT NULL DEFAULT now(),
-    data_source VARCHAR(100),
-    chain VARCHAR(50),
-    UNIQUE (protocol_name, protocol_segment, wallet_address, snapshot_time)
-);
-CREATE INDEX idx_top_wallets_protocol_time ON top_wallets(protocol_name, snapshot_time);
-
--- 5. Risk metrics (generic)
-CREATE TABLE IF NOT EXISTS risk_metrics (
-    id SERIAL PRIMARY KEY,
-    protocol_name VARCHAR(100) NOT NULL,
-    protocol_segment VARCHAR(100),
-    metric_name VARCHAR(100),
-    metric_value NUMERIC(30,10),
-    collected_at TIMESTAMP NOT NULL DEFAULT now(),
-    data_source VARCHAR(100),
-    chain VARCHAR(50),
-    UNIQUE (protocol_name, protocol_segment, metric_name, collected_at)
-);
-CREATE INDEX idx_risk_metrics_protocol_time ON risk_metrics(protocol_name, collected_at);
+-- Create DWS Fact Tables
+\i sql/dws/create_dws_tvl_snapshots_dm.sql
+\i sql/dws/create_dws_token_prices_dm.sql
+\i sql/dws/create_dws_apy_snapshots_dm.sql
+\i sql/dws/create_dws_top_wallets_dm.sql
+\i sql/dws/create_dws_risk_metrics_dm.sql

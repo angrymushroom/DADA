@@ -1,4 +1,10 @@
+import os
+import sys
+import psycopg2
+from dotenv import load_dotenv
 from datetime import datetime, UTC, timedelta
+
+load_dotenv()
 
 # Add the project root to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -9,56 +15,97 @@ from backend.db import get_db_connection
 # Set to 0 or comment out to disable retention
 DATA_RETENTION_DAYS = int(os.getenv("DATA_RETENTION_DAYS", 0))
 
-def delete_old_data(protocol_name, retention_days):
-    """Deletes data older than retention_days for a given protocol."""
+def delete_old_data(table_name, protocol_name, retention_days):
+    """Deletes data older than retention_days for a given protocol from a specified table."""
     if retention_days <= 0:
-        print(f"Data retention is disabled for {protocol_name}.")
+        print(f"Data retention is disabled for {protocol_name} in {table_name}.")
         return
 
     conn = get_db_connection()
     cursor = conn.cursor()
     cutoff_date = datetime.now(UTC) - timedelta(days=retention_days)
-    print(f"Deleting {protocol_name} risk metrics data older than {cutoff_date}...")
-    cursor.execute("""
-        DELETE FROM risk_metrics
-        WHERE protocol_name = %s AND collected_at < %s;
-    """, (protocol_name, cutoff_date))
+    print(f"Deleting {protocol_name} data from {table_name} older than {cutoff_date}...")
+    cursor.execute(f"""
+        DELETE FROM {table_name}
+        WHERE protocol_id IN (
+            SELECT protocol_id FROM dim_protocol_dm WHERE protocol_name = %s
+        ) AND time_id IN (
+            SELECT time_id FROM dim_time_dm WHERE date < %s
+        );
+    """, (protocol_name, cutoff_date.date()))
     deleted_rows = cursor.rowcount
     conn.commit()
     cursor.close()
     conn.close()
-    print(f"Deleted {deleted_rows} old rows for {protocol_name}.")
+    print(f"Deleted {deleted_rows} old rows for {protocol_name} in {table_name}.")
+
+def get_or_create_time_id(cursor, timestamp):
+    """Gets or creates a time_id from dim_time_dm for a given timestamp."""
+    date_only = timestamp.date()
+    cursor.execute("SELECT time_id FROM dim_time_dm WHERE date = %s", (date_only,))
+    time_id = cursor.fetchone()
+    if time_id:
+        return time_id[0]
+    else:
+        # Populate dim_time_dm for the date if it doesn't exist
+        cursor.execute("SELECT populate_dim_time_dm(%s, %s)", (date_only, date_only))
+        cursor.execute("SELECT time_id FROM dim_time_dm WHERE date = %s", (date_only,))
+        return cursor.fetchone()[0]
+
+def get_or_create_protocol_id(cursor, protocol_name, protocol_segment, chain):
+    """Gets or creates a protocol_id from dim_protocol_dm for a given protocol."""
+    cursor.execute("SELECT protocol_id FROM dim_protocol_dm WHERE protocol_name = %s", (protocol_name,))
+    protocol_id = cursor.fetchone()
+    if protocol_id:
+        return protocol_id[0]
+    else:
+        cursor.execute("""
+            INSERT INTO dim_protocol_dm (protocol_name, protocol_segment, chain)
+            VALUES (%s, %s, %s) RETURNING protocol_id;
+        """, (protocol_name, protocol_segment, chain))
+        return cursor.fetchone()[0]
 
 
-def compute_risk_metrics(protocol_name, protocol_segment):
+def compute_risk_metrics(protocol_id, protocol_name):
     conn = get_db_connection()
     cur = conn.cursor()
 
     # TVL volatility
     cur.execute("""
-        SELECT stddev(tvl) FROM tvl_snapshots
-        WHERE protocol_name = %s AND snapshot_time > now() - interval '7 days'
-    """, (protocol_name,))
-    tvl_vol = cur.fetchone()[0]
+        SELECT stddev(tvl_usd) FROM dws_tvl_snapshots_dm
+        WHERE protocol_id = %s AND time_id IN (
+            SELECT time_id FROM dim_time_dm WHERE date > now() - interval '7 days'
+        )
+    """, (protocol_id,))
+    tvl_vol = cur.fetchone()[0] or 0.0
 
-    # Whale concentration (based on available top_wallets data)
-    cur.execute("""
-        SELECT sum(balance) FROM (
-            SELECT balance FROM top_wallets
-            WHERE protocol_name = %s
-            ORDER BY balance DESC
-            LIMIT 10
-        ) t
-    """, (protocol_name,))
-    top_balance = cur.fetchone()[0] or 0
+    # Whale concentration (based on available dws_top_wallets_dm data)
+    top_balance = 0
+    total_balance = 0
+    whale_pct = 0
 
     cur.execute("""
-        SELECT sum(balance) FROM top_wallets
-        WHERE protocol_name = %s
-    """, (protocol_name,))
-    total_balance = cur.fetchone()[0] or 1
+        SELECT count(*) FROM dws_top_wallets_dm
+        WHERE protocol_id = %s
+    """, (protocol_id,))
+    if cur.fetchone()[0] > 0: # Only proceed if there's data for the protocol
+        cur.execute("""
+            SELECT sum(balance_usd) FROM (
+                SELECT balance_usd FROM dws_top_wallets_dm
+                WHERE protocol_id = %s
+                ORDER BY balance_usd DESC
+                LIMIT 10
+            ) t
+        """, (protocol_id,))
+        top_balance = cur.fetchone()[0] or 0
 
-    whale_pct = (top_balance / total_balance) * 100 if total_balance > 0 else 0
+        cur.execute("""
+            SELECT sum(balance_usd) FROM dws_top_wallets_dm
+            WHERE protocol_id = %s
+        """, (protocol_id,))
+        total_balance = cur.fetchone()[0] or 1
+
+        whale_pct = (top_balance / total_balance) * 100 if total_balance > 0 else 0
 
     cur.close()
     conn.close()
@@ -66,50 +113,50 @@ def compute_risk_metrics(protocol_name, protocol_segment):
 
 def fetch_and_insert_risk_metrics():
     protocols = {
-        "Minswap": "DEX",
-        "Indigo": "CDP",
-        "Liqwid": "Lending Pool"
+        "Minswap": {"segment": "DEX", "chain": "Cardano"},
+        "Indigo": {"segment": "CDP", "chain": "Cardano"},
+        "Liqwid": {"segment": "Lending Pool", "chain": "Cardano"}
     }
 
     conn = get_db_connection()
     cur = conn.cursor()
 
-    for protocol_name, protocol_segment in protocols.items():
-        tvl_vol, whale_pct = compute_risk_metrics(protocol_name, protocol_segment)
+    current_timestamp = datetime.now(UTC)
+    time_id = get_or_create_time_id(cur, current_timestamp)
+
+    for protocol_name, details in protocols.items():
+        protocol_id = get_or_create_protocol_id(cur, protocol_name, details["segment"], details["chain"])
+        tvl_vol, whale_pct = compute_risk_metrics(protocol_id, protocol_name)
 
         # Insert TVL Volatility
         cur.execute(
             """
-            INSERT INTO risk_metrics (protocol_name, protocol_segment, metric_name, metric_value, collected_at, data_source, chain)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (protocol_name, protocol_segment, metric_name, collected_at) DO NOTHING;
+            INSERT INTO dws_risk_metrics_dm (protocol_id, time_id, metric_name, metric_value, data_source)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (protocol_id, time_id, metric_name) DO NOTHING;
             """,
             (
-                protocol_name,
-                protocol_segment,
+                protocol_id,
+                time_id,
                 "tvl_volatility",
                 tvl_vol,
-                datetime.now(UTC),
-                "Internal Calculation",
-                "Cardano"
+                "Internal Calculation"
             )
         )
 
         # Insert Whale Concentration
         cur.execute(
             """
-            INSERT INTO risk_metrics (protocol_name, protocol_segment, metric_name, metric_value, collected_at, data_source, chain)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (protocol_name, protocol_segment, metric_name, collected_at) DO NOTHING;
+            INSERT INTO dws_risk_metrics_dm (protocol_id, time_id, metric_name, metric_value, data_source)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (protocol_id, time_id, metric_name) DO NOTHING;
             """,
             (
-                protocol_name,
-                protocol_segment,
+                protocol_id,
+                time_id,
                 "whale_concentration_pct",
                 whale_pct,
-                datetime.now(UTC),
-                "Internal Calculation",
-                "Cardano"
+                "Internal Calculation"
             )
         )
     conn.commit()
@@ -117,7 +164,7 @@ def fetch_and_insert_risk_metrics():
     conn.close()
 
     # Apply data retention after new data is inserted
-    delete_old_data("Risk Metrics", DATA_RETENTION_DAYS)
+    delete_old_data("dws_risk_metrics_dm", "Risk Metrics", DATA_RETENTION_DAYS)
 
 if __name__ == "__main__":
     # For production, schedule this script to run periodically (e.g., hourly, daily)
