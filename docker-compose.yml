@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       # Airflow specific DB user
-      POSTGRES_USER_AIRFLOW: airflow_user
+
     volumes:
       - db_data:/var/lib/postgresql/data
       # - ./scripts/create_tables.sql:/docker-entrypoint-initdb.d/create_tables.sql
@@ -49,50 +49,89 @@ services:
       MB_DB_DBNAME: ${DB_NAME}
       MB_DB_USER: ${DB_USER}
       MB_DB_PASS: ${DB_PASSWORD}
+      MB_DB_SCHEMA: metabase_meta
     depends_on:
       - db # Ensure the database is up before Metabase starts
 
   # Airflow services (ADDED)
-  
+
 
   airflow-webserver:
-    image: apache/airflow:2.9.2-python3.11
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: airflow_webserver
     restart: always
     depends_on:
       db:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     ports:
       - "8080:8080" # Airflow UI
     environment:
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user@db:5432/${DB_NAME}
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      PYTHONPATH: /opt/airflow/
+      AIRFLOW__DATABASE__SCHEMA: airflow_meta
     volumes:
       - ./dags:/opt/airflow/dags # Mount your DAGs folder
       - ./logs:/opt/airflow/logs # Mount logs folder
       - ./plugins:/opt/airflow/plugins # Mount plugins folder (if any)
+      - ./backend:/opt/airflow/backend # Mount backend code
     networks:
       - default
-    command: bash -c "sleep 30 && airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com && webserver"
+    command: airflow webserver
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: airflow_init
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      PYTHONPATH: /opt/airflow/
+      AIRFLOW__DATABASE__SCHEMA: airflow_meta
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./backend:/opt/airflow/backend # Mount backend code
+    networks:
+      - default
+    command: bash -c "sleep 30 && airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin"
 
   airflow-scheduler:
-    image: apache/airflow:2.9.2-python3.11
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
     container_name: airflow_scheduler
     restart: always
     depends_on:
       db:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
     environment:
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user@db:5432/airflow
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      PYTHONPATH: /opt/airflow/
+      AIRFLOW__DATABASE__SCHEMA: airflow_meta
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
+      - ./backend:/opt/airflow/backend # Mount backend code
     networks:
       - default
     command: scheduler
