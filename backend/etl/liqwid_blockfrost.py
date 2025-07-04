@@ -90,29 +90,10 @@ def fetch_and_insert_liqwid_tvl():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    current_timestamp = datetime.now(UTC)
-    time_id = get_or_create_time_id(cursor, current_timestamp)
-    protocol_id = get_or_create_protocol_id(cursor, 'Liqwid', 'Lending Pool', 'Cardano')
-    ada_asset_id = get_or_create_asset_id(cursor, 'ADA', 'Cardano', 'lovelace', '')
-
-    # --- Temporarily using dummy data to avoid Blockfrost API calls ---
-    # In a real scenario, you would fetch actual data here.
-    dummy_tvl_usd = 500000.0 # Example dummy TVL
-    dummy_address = "dummy_liqwid_pool_address"
-    
-    cursor.execute("""
-        INSERT INTO dws_tvl_snapshots_dm (protocol_id, asset_id, time_id, address, tvl_usd, data_source)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (protocol_id, asset_id, time_id, address) DO NOTHING;
-    """, (
-        protocol_id,
-        ada_asset_id,
-        time_id,
-        dummy_address,
-        dummy_tvl_usd,
-        'Dummy Data'
-    ))
-    # --- End of dummy data section ---
+    # Execute SQL transformation to DWS
+    with open('sql/etl_transformations/transform_liqwid_tvl_to_dws.sql', 'r') as f:
+        sql_transform = f.read()
+    cursor.execute(sql_transform)
 
     conn.commit()
     cursor.close()
@@ -122,12 +103,5 @@ def fetch_and_insert_liqwid_tvl():
     delete_old_data("dws_tvl_snapshots_dm", "Liqwid", DATA_RETENTION_DAYS)
 
 if __name__ == "__main__":
-    fetch_and_insert_liqwid_tvl()
-    print("Successfully fetched and inserted Liqwid TVL data.")
-
-if __name__ == "__main__":
-    # For production, schedule this script to run periodically (e.g., hourly, daily)
-    # using a tool like cron or a Python-based scheduler.
-    # The frequency of execution determines the granularity of your collected data.
     fetch_and_insert_liqwid_tvl()
     print("Successfully fetched and inserted Liqwid TVL data.")

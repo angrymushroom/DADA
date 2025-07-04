@@ -18,7 +18,8 @@ To provide comprehensive, real-time, and historical analytics for Cardano DeFi p
     *   Real-time token price fetching (e.g., ADA, MIN, iUSD, LQ) via CoinGecko.
     *   APY data collection for Liqwid.
     *   Top wallet and risk metrics data collection.
-    *   Initial database schema for storing collected data.
+    *   Initial database schema for storing collected data (now implemented as a star schema).
+*   **Note:** Due to Blockfrost API rate limits, some ETLs (Indigo, Liqwid TVL, Top Wallets) are currently using dummy data for this phase. Real-time integration for these will be addressed in future iterations or with increased API capacity.
     *   Basic data retention policies.
 *   **Target Completion:** Q3 2025
 

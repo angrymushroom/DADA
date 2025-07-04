@@ -4,4 +4,4 @@ psycopg2-binary
 requests
 sqlalchemy
 python-dotenv
-charli3-dendrite
+pycoingecko

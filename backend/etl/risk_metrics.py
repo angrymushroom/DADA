@@ -126,45 +126,28 @@ def fetch_and_insert_risk_metrics():
 
     for protocol_name, details in protocols.items():
         protocol_id = get_or_create_protocol_id(cur, protocol_name, details["segment"], details["chain"])
-        tvl_vol, whale_pct = compute_risk_metrics(protocol_id, protocol_name)
+        
+        # Execute SQL transformation to DWS
+        with open('sql/etl_transformations/transform_risk_metrics_to_dws.sql', 'r') as f:
+            sql_transform = f.read()
+        cur.execute(sql_transform, (
+            protocol_id, time_id, protocol_id, time_id, protocol_id, time_id, # For TVL volatility
+            protocol_id, time_id # For Whale Concentration
+        ))
 
-        # Insert TVL Volatility
-        cur.execute(
-            """
-            INSERT INTO dws_risk_metrics_dm (protocol_id, time_id, metric_name, metric_value, data_source)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (protocol_id, time_id, metric_name) DO NOTHING;
-            """,
-            (
-                protocol_id,
-                time_id,
-                "tvl_volatility",
-                tvl_vol,
-                "Internal Calculation"
-            )
-        )
-
-        # Insert Whale Concentration
-        cur.execute(
-            """
-            INSERT INTO dws_risk_metrics_dm (protocol_id, time_id, metric_name, metric_value, data_source)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (protocol_id, time_id, metric_name) DO NOTHING;
-            """,
-            (
-                protocol_id,
-                time_id,
-                "whale_concentration_pct",
-                whale_pct,
-                "Internal Calculation"
-            )
-        )
     conn.commit()
     cur.close()
     conn.close()
 
     # Apply data retention after new data is inserted
     delete_old_data("dws_risk_metrics_dm", "Risk Metrics", DATA_RETENTION_DAYS)
+
+if __name__ == "__main__":
+    # For production, schedule this script to run periodically (e.g., hourly, daily)
+    # using a tool like cron or a Python-based scheduler.
+    # The frequency of execution determines the granularity of your collected data.
+    fetch_and_insert_risk_metrics()
+    print("Successfully fetched and inserted risk metrics.")
 
 if __name__ == "__main__":
     # For production, schedule this script to run periodically (e.g., hourly, daily)

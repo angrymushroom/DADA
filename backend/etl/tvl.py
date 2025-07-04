@@ -111,11 +111,10 @@ def fetch_and_insert_all_tvl():
                 total_tvl = 0.0 # Placeholder TVL
                 data_source = 'Manual'
 
-            cursor.execute("""
-                INSERT INTO dws_tvl_snapshots_dm (protocol_id, time_id, address, tvl_usd, data_source)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (protocol_id, time_id, address) DO NOTHING;
-            """, (
+            # Execute SQL transformation to DWS
+            with open('sql/etl_transformations/transform_tvl_to_dws.sql', 'r') as f:
+                sql_transform = f.read()
+            cursor.execute(sql_transform, (
                 protocol_id,
                 time_id,
                 'Overall',

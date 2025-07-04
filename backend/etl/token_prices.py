@@ -106,29 +106,15 @@ def fetch_and_insert_token_prices():
                     current_timestamp
                 ))
 
-                # Get or create asset_id
-                asset_info = TOKEN_ADDRESS_MAP.get(coingecko_id, {})
-                asset_policy_id = asset_info.get("policy_id")
-                asset_name_hex = asset_info.get("asset_name")
-                asset_id = get_or_create_asset_id(cursor, token_symbol, token_symbol, asset_policy_id, asset_name_hex)
+        conn.commit()
 
-                # Insert into DWS table
-                cursor.execute("""
-                    INSERT INTO dws_token_prices_dm (asset_id, time_id, price_usd, data_source)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (asset_id, time_id) DO UPDATE SET
-                    price_usd = EXCLUDED.price_usd, data_source = EXCLUDED.data_source;
-                """, (
-                    asset_id,
-                    time_id,
-                    price_usd,
-                    'CoinGecko'
-                ))
-            else:
-                print(f"Could not fetch price for {token_symbol} (CoinGecko ID: {coingecko_id})")
+        # Execute SQL transformation to DWS
+        with open('sql/etl_transformations/transform_token_prices_to_dws.sql', 'r') as f:
+            sql_transform = f.read()
+        cursor.execute(sql_transform)
 
     except Exception as e:
-        print(f"Error fetching prices from CoinGecko: {e}")
+        print(f"Error fetching prices from CoinGecko or transforming data: {e}")
 
     conn.commit()
     cursor.close()

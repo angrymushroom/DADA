@@ -1,0 +1,107 @@
+services:
+  db:
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      # Airflow specific DB user
+      POSTGRES_USER_AIRFLOW: airflow_user
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      # - ./scripts/create_tables.sql:/docker-entrypoint-initdb.d/create_tables.sql
+    ports:
+      - "5432:5432" # Expose PostgreSQL port to host
+    healthcheck: # ADDED HEALTHCHECK
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  backend:
+    build: .
+    restart: always
+    ports:
+      - "8000:8000" # Expose FastAPI port to host
+    environment:
+      DB_HOST: db # Use the service name 'db' as the hostname for the database
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BLOCKFROST_API_KEY: ${BLOCKFROST_API_KEY}
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS}
+    depends_on:
+      - db
+    # Command to run the FastAPI application
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000
+
+  metabase:
+    image: metabase/metabase:latest # Or a specific version you prefer, e.g., metabase/metabase:v0.49.3
+    restart: always
+    ports:
+      - "3000:3000" # Expose Metabase UI port to host
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: db # IMPORTANT: Use the service name of your PostgreSQL container
+      MB_DB_PORT: 5432
+      MB_DB_DBNAME: ${DB_NAME}
+      MB_DB_USER: ${DB_USER}
+      MB_DB_PASS: ${DB_PASSWORD}
+    depends_on:
+      - db # Ensure the database is up before Metabase starts
+
+  # Airflow services (ADDED)
+  
+
+  airflow-webserver:
+    image: apache/airflow:2.9.2-python3.11
+    container_name: airflow_webserver
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080" # Airflow UI
+    environment:
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user@db:5432/${DB_NAME}
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    volumes:
+      - ./dags:/opt/airflow/dags # Mount your DAGs folder
+      - ./logs:/opt/airflow/logs # Mount logs folder
+      - ./plugins:/opt/airflow/plugins # Mount plugins folder (if any)
+    networks:
+      - default
+    command: bash -c "sleep 30 && airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com && webserver"
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.2-python3.11
+    container_name: airflow_scheduler
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user@db:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    networks:
+      - default
+    command: scheduler
+
+volumes:
+  db_data:
+  # You might want a volume for Metabase data too, to persist its configuration and dashboards
+  # metabase_data:
+
+networks:
+  default:
+    name: dada_network # Give your network a custom name

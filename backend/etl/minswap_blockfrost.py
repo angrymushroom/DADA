@@ -83,50 +83,18 @@ def get_or_create_asset_id(cursor, asset_symbol, asset_name, asset_policy_id=Non
         """, (asset_symbol, asset_name, asset_policy_id, asset_fingerprint))
         return cursor.fetchone()[0]
 
-def get_minswap_addresses_from_db():
-    """Retrieves unique Minswap pool addresses from the database."""
-    conn = psycopg2.connect(
-        dbname=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASSWORD"),
-        host=os.getenv("DB_HOST"),
-        port=os.getenv("DB_PORT")
-    )
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT address FROM tvl_snapshots WHERE protocol_name = 'Minswap';")
-    addresses = [row[0] for row in cursor.fetchmany(50)] # Fetch only 50 addresses
-    cursor.close()
-    conn.close()
-    return addresses
-
 def fetch_and_insert_all_pools_tvl():
-    """Fetches TVL for all Minswap pools and inserts it into the dws_tvl_snapshots_dm table (using dummy data for now)."""
+    """Calculates and inserts dummy TVL for Minswap pools into the new star schema.
+
+    This function also applies data retention based on DATA_RETENTION_DAYS.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    current_timestamp = datetime.now(UTC)
-    time_id = get_or_create_time_id(cursor, current_timestamp)
-    protocol_id = get_or_create_protocol_id(cursor, 'Minswap', 'DEX', 'Cardano')
-    ada_asset_id = get_or_create_asset_id(cursor, 'ADA', 'Cardano', 'lovelace', '')
-
-    # --- Temporarily using dummy data to avoid Blockfrost API calls ---
-    # In a real scenario, you would fetch actual data here.
-    dummy_tvl_usd = 1000000.0 # Example dummy TVL
-    dummy_address = "dummy_minswap_pool_address"
-    
-    cursor.execute("""
-        INSERT INTO dws_tvl_snapshots_dm (protocol_id, asset_id, time_id, address, tvl_usd, data_source)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (protocol_id, asset_id, time_id, address) DO NOTHING;
-    """, (
-        protocol_id,
-        ada_asset_id,
-        time_id,
-        dummy_address,
-        dummy_tvl_usd,
-        'Dummy Data'
-    ))
-    # --- End of dummy data section ---
+    # Execute SQL transformation to DWS
+    with open('sql/etl_transformations/transform_minswap_tvl_to_dws.sql', 'r') as f:
+        sql_transform = f.read()
+    cursor.execute(sql_transform)
 
     conn.commit()
     cursor.close()

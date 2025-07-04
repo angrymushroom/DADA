@@ -86,39 +86,12 @@ def fetch_and_insert_liqwid_apy():
     current_timestamp = datetime.now(UTC)
     time_id = get_or_create_time_id(cursor, current_timestamp)
     protocol_id = get_or_create_protocol_id(cursor, 'Liqwid', 'Lending Pool', 'Cardano')
-    asset_id = get_or_create_asset_id(cursor, 'ADA', 'Cardano', 'lovelace', '') # Assuming qADA is tied to ADA
+    ada_asset_id = get_or_create_asset_id(cursor, 'ADA', 'Cardano', 'lovelace', '') # Assuming qADA is tied to ADA
 
-    # Simplified APY calculation: Assume a fixed supply and borrow rate
-    supply_apy = 0.035 # 3.5% dummy supply APY
-    borrow_apy = 0.08 # 8% dummy borrow APY
-
-    # Insert Supply APY
-    cursor.execute("""
-        INSERT INTO dws_apy_snapshots_dm (protocol_id, asset_id, time_id, pool_name, apy_value, data_source)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (protocol_id, asset_id, time_id, pool_name) DO NOTHING;
-    """, (
-        protocol_id,
-        asset_id,
-        time_id,
-        'qADA - Supply',
-        supply_apy,
-        'Estimated'
-    ))
-
-    # Insert Borrow APY
-    cursor.execute("""
-        INSERT INTO dws_apy_snapshots_dm (protocol_id, asset_id, time_id, pool_name, apy_value, data_source)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (protocol_id, asset_id, time_id, pool_name) DO NOTHING;
-    """, (
-        protocol_id,
-        asset_id,
-        time_id,
-        'qADA - Borrow',
-        borrow_apy,
-        'Estimated'
-    ))
+    # Execute SQL transformation to DWS
+    with open('sql/etl_transformations/transform_apy_to_dws.sql', 'r') as f:
+        sql_transform = f.read()
+    cursor.execute(sql_transform)
 
     conn.commit()
     cursor.close()

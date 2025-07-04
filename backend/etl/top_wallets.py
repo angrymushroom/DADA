@@ -132,6 +132,35 @@ def fetch_and_insert_top_wallets():
     # Apply data retention after new data is inserted
     delete_old_data("dws_top_wallets_dm", "Top Wallets", DATA_RETENTION_DAYS)
 
+def fetch_and_insert_top_wallets():
+    """Calculates and inserts dummy top wallets into the new star schema.
+
+    This function also applies data retention based on DATA_RETENTION_DAYS.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    current_timestamp = datetime.now(UTC)
+    time_id = get_or_create_time_id(cursor, current_timestamp)
+    protocol_id = get_or_create_protocol_id(cursor, 'Indigo', 'CDP', 'Cardano')
+    asset_id = get_or_create_asset_id(cursor, 'IUSD', 'Indigo Protocol iUSD', 'f66d78b4a3cb3d37afa0ec36461e51ecbde00f26c8f0a68f94b69880', '69555344')
+
+    # Execute SQL transformation to DWS
+    with open('sql/etl_transformations/transform_top_wallets_to_dws.sql', 'r') as f:
+        sql_transform = f.read()
+    cursor.execute(sql_transform, (
+        protocol_id,
+        asset_id,
+        time_id
+    ))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    # Apply data retention after new data is inserted
+    delete_old_data("dws_top_wallets_dm", "Top Wallets", DATA_RETENTION_DAYS)
+
 if __name__ == "__main__":
     fetch_and_insert_top_wallets()
     print("Successfully fetched and inserted top wallet data.")
