@@ -32,13 +32,20 @@ DADA (Decentralized Asset Data Analytics) is a project that collects, processes,
 
 DADA aims to be a modular foundation for building richer DeFi analytics tools within the Cardano ecosystem.
 
-## 🚀 Getting Started
+## 🚀 Getting Started with Docker
+
+This project is fully dockerized, which makes it easy to set up and run all the services with a single command. The `docker-compose.yml` file orchestrates the following services:
+
+-   `postgres`: The PostgreSQL database for storing all the data.
+-   `airflow-webserver`: The Airflow web interface for managing and monitoring ETL pipelines.
+-   `airflow-scheduler`: The Airflow scheduler that triggers the ETL jobs.
+-   `metabase`: A business intelligence tool for data visualization.
+-   `backend`: The FastAPI backend application.
 
 ### Prerequisites
 
-- **PostgreSQL:** Ensure you have a PostgreSQL database instance running.
-- **Blockfrost API Key:** Obtain a project ID from [Blockfrost.io](https://blockfrost.io).
-- **Python 3.x:** (Recommended: Python 3.7 to 3.10 for full compatibility with all libraries).
+-   **Docker and Docker Compose:** Ensure you have Docker and Docker Compose installed on your system.
+-   **Blockfrost API Key:** Obtain a project ID from [Blockfrost.io](https://blockfrost.io).
 
 ### Setup
 
@@ -48,47 +55,36 @@ DADA aims to be a modular foundation for building richer DeFi analytics tools wi
     cd DADA
     ```
 
-2.  **Set up Python Virtual Environment:**
-    ```bash
-    python3 -m venv env
-    source env/bin/activate
-    pip install -r requirements.txt
-    ```
-
-3.  **Environment Variables:**
-    Create a `.env` file in the root directory of the project based on `.env.example`:
+2.  **Environment Variables:**
+    Create a `.env` file in the root directory of the project based on `.env.example`. You only need to set the `BLOCKFROST_API_KEY`. The rest of the variables are pre-configured for the Docker environment.
     ```
     BLOCKFROST_API_KEY=your_blockfrost_api_key_here
-    DB_NAME=your_db_name
-    DB_USER=your_db_user
-    DB_PASSWORD=your_db_password
-    DB_HOST=localhost
-    DB_PORT=5432
-    DATA_RETENTION_DAYS=30 # Optional: Number of days to retain granular data. Set to 0 to disable.
     ```
 
-4.  **Database Schema Setup:**
-    Apply the database schema. This will create all necessary tables.
+3.  **Build and Run with Docker Compose:**
     ```bash
-    source env/bin/activate
-    psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -f scripts/create_tables.sql
+    docker-compose up --build
     ```
+    This command will build the Docker images and start all the services.
 
-### Running ETLs
+### Accessing the Services
 
-To collect data, run the individual ETL scripts. For production, these should be scheduled using a tool like `cron`.
+-   **Airflow UI:** Open your browser and go to `http://localhost:8080`. The default username and password are `airflow`.
+-   **Metabase UI:** Open your browser and go to `http://localhost:3000`. You will need to set up a new user and connect to the PostgreSQL database. The database connection details are:
+    -   **Database Type:** PostgreSQL
+    -   **Host:** `postgres`
+    -   **Port:** `5432`
+    -   **Database Name:** `cardano_dada`
+    -   **Username:** `gaobotao`
+    -   **Password:** `yourpassword`
+-   **FastAPI Backend:** The API is available at `http://localhost:8000`. You can access the API documentation at `http://localhost:8000/docs`.
 
-```bash
-source env/bin/activate
-python3 backend/etl/minswap_blockfrost.py
-python3 backend/etl/indigo_blockfrost.py
-python3 backend/etl/liqwid_blockfrost.py
-python3 backend/etl/token_prices.py
-python3 backend/etl/top_wallets.py
-python3 backend/etl/risk_metrics.py
-python3 backend/etl/apy.py
-```
+## 📈 Running ETLs with Airflow
 
-## 📈 Data Visualization
+The ETL pipelines are defined as Airflow DAGs in the `dags` directory. Once you start the services with `docker-compose`, the Airflow scheduler will automatically start triggering the DAGs based on their schedules.
 
-For now, data can be visualized using tools like Metabase by connecting it to your PostgreSQL database.
+You can also manually trigger the DAGs from the Airflow UI.
+
+## 📈 Data Visualization with Metabase
+
+Once the ETLs have run and populated the database, you can use Metabase to create dashboards and visualize the data. Connect Metabase to the PostgreSQL database as described in the "Accessing the Services" section.
